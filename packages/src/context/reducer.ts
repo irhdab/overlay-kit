@@ -1,4 +1,5 @@
 import { type OverlayControllerComponent } from './provider/content-overlay-controller';
+import { DuplicateOverlayError, handleOverlayError } from '../utils/errors';
 
 type OverlayId = string;
 type OverlayItem = {
@@ -52,23 +53,22 @@ export const determineCurrentOverlayId = (
   targetOverlayId: OverlayId
 ): OverlayId | null => {
   const openedOverlayOrderList = overlayOrderList.filter(
-    (orderedOverlayId) => overlayData[orderedOverlayId].isOpen === true
+    (orderedOverlayId) => overlayData[orderedOverlayId]?.isOpen === true
   );
   const targetIndexInOpenedList = openedOverlayOrderList.findIndex((item) => item === targetOverlayId);
 
   return targetIndexInOpenedList === openedOverlayOrderList.length - 1
     ? openedOverlayOrderList[targetIndexInOpenedList - 1] ?? null
-    : openedOverlayOrderList[openedOverlayOrderList.length - 1];
+    : openedOverlayOrderList[openedOverlayOrderList.length - 1] ?? null;
 };
 
 export function overlayReducer(state: OverlayData, action: OverlayReducerAction): OverlayData {
   switch (action.type) {
     case 'ADD': {
-      if (state.overlayData[action.overlay.id] != null && state.overlayData[action.overlay.id].isOpen === false) {
-        const overlay = state.overlayData[action.overlay.id];
-
+      const existingOverlay = state.overlayData[action.overlay.id];
+      if (existingOverlay != null && existingOverlay.isOpen === false) {
         // ignore if the overlay don't exist or already open
-        if (overlay == null || overlay.isOpen) {
+        if (existingOverlay.isOpen) {
           return state;
         }
 
@@ -77,17 +77,17 @@ export function overlayReducer(state: OverlayData, action: OverlayReducerAction)
           current: action.overlay.id,
           overlayData: {
             ...state.overlayData,
-            [action.overlay.id]: { ...overlay, isOpen: true },
+            [action.overlay.id]: { ...existingOverlay, isOpen: true },
           },
         };
       }
 
       const isExisted = state.overlayOrderList.includes(action.overlay.id);
+      const potentialExisting = state.overlayData[action.overlay.id];
 
-      if (isExisted && state.overlayData[action.overlay.id].isOpen === true) {
-        throw new Error(
-          `You can't open the multiple overlays with the same overlayId(${action.overlay.id}). Please set a different id.`
-        );
+      if (isExisted && potentialExisting?.isOpen === true) {
+        handleOverlayError(new DuplicateOverlayError(action.overlay.id));
+        return state;
       }
 
       return {
@@ -175,16 +175,9 @@ export function overlayReducer(state: OverlayData, action: OverlayReducerAction)
       return {
         ...state,
         current: null,
-        overlayData: Object.keys(state.overlayData).reduce(
-          (prev, curr) => ({
-            ...prev,
-            [curr]: {
-              ...state.overlayData[curr],
-              isOpen: false,
-            } satisfies OverlayItem,
-          }),
-          {} satisfies Record<string, OverlayItem>
-        ),
+        overlayData: Object.fromEntries(
+          Object.entries(state.overlayData).map(([id, item]) => [id, { ...item, isOpen: false }])
+        ) as Record<string, OverlayItem>,
       };
     }
     case 'REMOVE_ALL': {
